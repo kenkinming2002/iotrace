@@ -4,116 +4,79 @@ const sys = @import("sys.zig");
 const ptrace = @import("ptrace.zig");
 
 fn usage(program_name: [*c]const u8) void {
-    std.debug.print("Usage: {s} <command>\n", .{program_name});
+    std.debug.print("Usage: {s} <output-file> <command>\n", .{program_name});
 }
 
-const Tracee = struct {
-    fn init(pid: c.pid_t) !Tracee {
-        // Set options for ptrace. The purpose of PTRACE_O_TRACESYSGOOD is to
-        // distinguish between syscall stops and signal delivery stop. The
-        // purpose of PTRACE_O_TRACEFORK, PTRACE_O_TRACEVFORK and
-        // PTRACE_O_TRACECLONE is to automatically start tracing any newly
-        // created child processes. Technically, we will also receive
-        // additional ptrace events on call to fork(), vfork() and clone() but
-        // we are not interested in that.
-        var options: usize = 0;
-        options |= c.PTRACE_O_TRACESYSGOOD;
-        options |= c.PTRACE_O_TRACEFORK;
-        options |= c.PTRACE_O_TRACEVFORK;
-        options |= c.PTRACE_O_TRACECLONE;
-        try ptrace.setoptions(pid, options);
-        return .{};
-    }
+const PacketType = enum(u8) {
+    Read,
+    Write,
+};
 
-    fn on_syscall_entry(self: *Tracee, pid: c.pid_t, nr: usize, args: [6]usize) void {
-        _ = self;
-        std.debug.print("Process {d}: syscall entry: nr = {d}, args = {any}\n", .{ pid, nr, args });
-    }
+const Packet = extern struct {
+    pid: c.pid_t align(1),
+    fd: i32 align(1),
+    type: PacketType align(1),
+    count: usize align(1),
+    timestamp: u64 align(1) = undefined,
 
-    fn on_syscall_exit(self: *Tracee, pid: c.pid_t, rval: isize, is_error: bool) void {
-        _ = self;
-        std.debug.print("Process {d}: syscall exit: rval = {d}, is_error = {}\n", .{ pid, rval, is_error });
+    fn parse(pid: c.pid_t, nr: usize, args: [6]usize, rval: isize, is_error: u8) ?Packet {
+        if (is_error != 0)
+            return null;
+
+        return switch (nr) {
+            c.SYS_read => .{
+                .pid = pid,
+                .fd = @intCast(args[0]),
+                .type = .Write,
+                .count = @intCast(rval),
+            },
+            c.SYS_write => .{
+                .pid = pid,
+                .fd = @intCast(args[0]),
+                .type = .Write,
+                .count = @intCast(rval),
+            },
+            else => null,
+        };
     }
 };
 
-const Tracees = std.AutoHashMap(c.pid_t, Tracee);
+const Context = struct {
+    timer: std.time.Timer,
+    output_file: std.fs.File,
 
-const Tracer = struct {
-    tracees: Tracees,
-
-    fn init(allocator: std.mem.Allocator) !Tracer {
-        const tracees = Tracees.init(allocator);
-        return .{ .tracees = tracees };
+    fn init(output_file_path: []const u8) !Context {
+        const timer = try std.time.Timer.start();
+        const output_file = try std.fs.cwd().createFile(output_file_path, .{});
+        return .{ .timer = timer, .output_file = output_file };
     }
 
-    fn deinit(self: *Tracer) void {
-        self.tracees.deinit();
+    fn deinit(self: *Context) void {
+        self.output_file.close();
     }
 
-    fn get_tracee(self: *Tracer, pid: c.pid_t) !*Tracee {
-        const entry = try self.tracees.getOrPut(pid);
-        if (!entry.found_existing) {
-            entry.value_ptr.* = try Tracee.init(pid);
-        }
-        return entry.value_ptr;
-    }
-
-    fn run(self: *Tracer, command: [][*:0]u8) !void {
-        _ = try ptrace.spawnvp(command[0], command.ptr);
-
-        var status: c_int = undefined;
-        while (try sys.wait(&status)) |pid| {
-            if (c.WIFEXITED(status)) {
-                _ = self.tracees.remove(pid);
-                std.debug.print("Process {d} exited with status code {d}.\n", .{ pid, c.WEXITSTATUS(status) });
-                continue;
-            }
-
-            if (c.WIFSIGNALED(status)) {
-                _ = self.tracees.remove(pid);
-                std.debug.print("Process {d} terminated by signal SIG{s}.\n", .{ pid, c.sigabbrev_np(c.WTERMSIG(status)) });
-                continue;
-            }
-
-            if (c.WIFSTOPPED(status)) {
-                const tracee = try self.get_tracee(pid);
-
-                if (c.WSTOPSIG(status) == c.SIGTRAP | 0x80) {
-                    const info = try ptrace.get_syscall_info(pid);
-                    switch (info.op) {
-                        c.PTRACE_SYSCALL_INFO_ENTRY => tracee.on_syscall_entry(pid, info.unnamed_0.entry.nr, info.unnamed_0.entry.args),
-                        c.PTRACE_SYSCALL_INFO_EXIT => tracee.on_syscall_exit(pid, info.unnamed_0.exit.rval, info.unnamed_0.exit.is_error != 0),
-                        else => {},
-                    }
-                }
-
-                try ptrace.syscall(pid);
-            }
-        }
-    }
-
-    fn on_syscall_entry(self: *Tracer, pid: c.pid_t, nr: usize, args: [6]usize) void {
-        _ = self;
-        std.debug.print("Process {d}: syscall entry: nr = {d}, args = {any}\n", .{ pid, nr, args });
-    }
-
-    fn on_syscall_exit(self: *Tracer, pid: c.pid_t, rval: isize, is_error: bool) void {
-        _ = self;
-        std.debug.print("Process {d}: syscall exit: rval = {d}, is_error = {}\n", .{ pid, rval, is_error });
+    fn callback(self: *Context, pid: c.pid_t, nr: usize, args: [6]usize, rval: isize, is_error: u8) anyerror!void {
+        var packet = Packet.parse(pid, nr, args, rval, is_error) orelse return;
+        packet.timestamp = self.timer.read();
+        try self.output_file.writeAll(std.mem.asBytes(&packet));
     }
 };
 
 pub fn main() !void {
     const allocator = std.heap.c_allocator;
 
-    const args = std.os.argv;
-    const program_name = args[0];
-    const command = args[1..];
-    if (command.len == 0) {
+    const argv = std.os.argv;
+    const program_name = argv[0];
+    if (argv.len < 3) {
         return usage(program_name);
     }
 
-    var tracer = try Tracer.init(allocator);
-    defer tracer.deinit();
-    try tracer.run(command);
+    const output_file_path = argv[1];
+    const command = argv[2..];
+
+    var context = try Context.init(std.mem.span(output_file_path));
+    defer context.deinit();
+
+    _ = try ptrace.spawnvp(command[0], command.ptr);
+    try ptrace.trace_syscalls(allocator, &context, Context.callback);
 }
