@@ -21,7 +21,7 @@ pub fn parse(pid: c.pid_t, nr: usize, args: [6]usize, rval: isize, is_error: u8)
         c.SYS_read => .{
             .pid = pid,
             .fd = @intCast(args[0]),
-            .type = .Write,
+            .type = .Read,
             .count = @intCast(rval),
         },
         c.SYS_write => .{
