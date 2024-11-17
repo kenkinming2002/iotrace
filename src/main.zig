@@ -7,7 +7,7 @@ const report = @import("report.zig").report;
 fn usage(program_name: [*c]const u8) void {
     std.debug.print("Usage: {s} record|report ...\n", .{program_name});
     std.debug.print("       {s} record <file> <command>\n", .{program_name});
-    std.debug.print("       {s} report <file>\n", .{program_name});
+    std.debug.print("       {s} report <file> <resolution-in-seconds>\n", .{program_name});
 }
 
 pub fn main() !void {
@@ -35,13 +35,24 @@ pub fn main() !void {
     }
 
     if (std.mem.eql(u8, subcommand, "report")) {
-        if (argv.len != 3) {
+        if (argv.len == 2) {
             std.debug.print("Error: Missing argument <file>\n", .{});
             return usage(program_name);
         }
 
+        if (argv.len == 3) {
+            std.debug.print("Error: Missing argument <resolution-in-seconds>\n", .{});
+            return usage(program_name);
+        }
+
+        if (argv.len > 4) {
+            std.debug.print("Error: Too many arguments\n", .{});
+            return usage(program_name);
+        }
+
         const log_file_path = std.mem.span(argv[2]);
-        return report(log_file_path);
+        const resolution_sec = try std.fmt.parseFloat(f64, std.mem.span(argv[3]));
+        return report(log_file_path, resolution_sec);
     }
 
     return usage(program_name);

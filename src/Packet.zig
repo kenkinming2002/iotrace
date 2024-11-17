@@ -2,7 +2,7 @@ const c = @import("c.zig");
 
 const Self = @This();
 
-const Type = enum(u8) {
+pub const Type = enum(u8) {
     Read,
     Write,
 };

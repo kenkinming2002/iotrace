@@ -4,6 +4,7 @@ pub usingnamespace @cImport({
     @cInclude("stdio.h");
     @cInclude("stdlib.h");
     @cInclude("string.h");
+    @cInclude("sys/fcntl.h");
     @cInclude("sys/ptrace.h");
     @cInclude("sys/syscall.h");
     @cInclude("sys/wait.h");
