@@ -5,6 +5,8 @@ const Self = @This();
 pub const Type = enum(u8) {
     Read,
     Write,
+    Send,
+    Recv,
 };
 
 pid: c.pid_t align(1),
@@ -28,6 +30,18 @@ pub fn parse(pid: c.pid_t, nr: usize, args: [6]usize, rval: isize, is_error: u8)
             .pid = pid,
             .fd = @intCast(args[0]),
             .type = .Write,
+            .count = @intCast(rval),
+        },
+        c.SYS_sendto => .{
+            .pid = pid,
+            .fd = @intCast(args[0]),
+            .type = .Send,
+            .count = @intCast(rval),
+        },
+        c.SYS_recvfrom => .{
+            .pid = pid,
+            .fd = @intCast(args[0]),
+            .type = .Recv,
             .count = @intCast(rval),
         },
         else => null,
