@@ -38,24 +38,46 @@ pub fn report(log_file_path: []const u8, resolution_sec: f64) !void {
     defer gnuplot.wait() catch {};
     defer gnuplot.stdin.close();
 
+    const resolution_nsec = resolution_sec * 1e9;
+
     samples_array_iter = samples_array.iterator();
     while (samples_array_iter.next()) |entry| {
         const title = @tagName(entry.key);
         const samples = entry.value;
 
         try gnuplot.stdin.writer().print("${s} << EOD\n", .{title});
-        for (samples.items) |sample| try gnuplot.stdin.writer().print("{d} {d}\n", .{ sample.count, sample.timestamp });
+        {
+            var index: usize = undefined;
+            var count: usize = 0;
+            for (samples.items) |sample| {
+                const new_index: usize = @intFromFloat(@round(@as(f64, @floatFromInt(sample.timestamp)) / resolution_nsec));
+
+                if (count != 0 and index != new_index) {
+                    const rate = @as(f64, @floatFromInt(count)) / resolution_sec;
+                    const time = @as(f64, @floatFromInt(index)) * resolution_sec;
+                    try gnuplot.stdin.writer().print("{d} {d}\n", .{ rate, time });
+
+                    count = 0;
+                }
+
+                index = new_index;
+                count += sample.count;
+            }
+
+            if (count != 0) {
+                const rate = @as(f64, @floatFromInt(count)) / resolution_sec;
+                const time = @as(f64, @floatFromInt(index)) * resolution_sec;
+                try gnuplot.stdin.writer().print("{d} {d}\n", .{ rate, time });
+            }
+        }
         try gnuplot.stdin.writer().print("EOD\n", .{});
     }
-
-    try gnuplot.stdin.writer().print("set boxwidth {} absolute\n", .{resolution_sec});
-    try gnuplot.stdin.writer().print("set style fill solid 1.0 noborder\n", .{});
 
     try gnuplot.stdin.writer().print("set xrange [0:*]\n", .{});
     try gnuplot.stdin.writer().print("set yrange [0:*]\n", .{});
 
-    try gnuplot.stdin.writer().print("set xlabel \"time(s)\"\n", .{});
-    try gnuplot.stdin.writer().print("set ylabel \"transfer(bytes)\"\n", .{});
+    try gnuplot.stdin.writer().print("set xlabel \"Time(s)\"\n", .{});
+    try gnuplot.stdin.writer().print("set ylabel \"Rate(byte/s)\"\n", .{});
 
     try gnuplot.stdin.writer().print("plot", .{});
 
@@ -65,7 +87,7 @@ pub fn report(log_file_path: []const u8, resolution_sec: f64) !void {
         const title = @tagName(entry.key);
 
         try gnuplot.stdin.writer().print("{s}", .{sep});
-        try gnuplot.stdin.writer().print("${s} using (round($2/1e9/{})*{}):1 smooth frequency with boxes title \"{s}\"", .{ title, resolution_sec, resolution_sec, title });
+        try gnuplot.stdin.writer().print("${s} using 2:1 title \"{s}\" with lines", .{ title, title });
         sep = ", ";
     }
     try gnuplot.stdin.writer().print("\n", .{});
