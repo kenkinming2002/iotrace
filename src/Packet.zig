@@ -47,3 +47,8 @@ pub fn parse(pid: c.pid_t, nr: usize, args: [6]usize, rval: isize, is_error: u8)
         else => null,
     };
 }
+
+pub fn timestamp_sec(self: *Self) f64 {
+    const value: f64 = @floatFromInt(self.timestamp);
+    return value * 1e-9;
+}
