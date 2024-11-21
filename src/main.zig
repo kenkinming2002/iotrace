@@ -56,8 +56,19 @@ pub fn main() !void {
         }
 
         const log_file_path = std.mem.span(argv[2]);
+
         const step = try std.fmt.parseFloat(f64, std.mem.span(argv[3]));
+        if (step < 0.0) {
+            std.debug.print("Error: <step> must be positive\n", .{});
+            return usage(program_name);
+        }
+
         const width = try std.fmt.parseFloat(f64, std.mem.span(argv[4]));
+        if (width < 0.0) {
+            std.debug.print("Error: <width> must be positive\n", .{});
+            return usage(program_name);
+        }
+
         return report(log_file_path, step, width);
     }
 
