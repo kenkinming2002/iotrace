@@ -64,7 +64,7 @@ pub fn report(log_file_path: []const u8, step: f64, width: f64) !void {
                 var j: usize = 0;
 
                 var timestamp: f64 = 0.0;
-                while (timestamp <= max_timestamp + step) : (timestamp += step) {
+                while (timestamp <= max_timestamp + width) : (timestamp += step) {
                     while (j < samples.items.len and timestamp >= samples.items[j].timestamp) {
                         count += samples.items[j].count;
                         j += 1;
